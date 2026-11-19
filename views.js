@@ -1,11 +1,11 @@
-import {apply} from './dist/commands.js';
-import {game,currentSkills} from './dist/game.js';
-import {academyLevel,managerLevel,managerRank,skillPoints,ACADEMY_THRESHOLDS} from './dist/progression.js';
-import {leagueStats,calendarStats,playerProfile,knownPlayerIds,bestXI,globalProfile,academyStats,transferStats,squadTrend} from './dist/statistics.js';
-import {museum} from './dist/legacy.js';
-import {PHILOSOPHIES,preset,effective,scoutLimit} from './dist/rules.js';
-import {eventModifiers,pendingEventCount} from './dist/events.js';
-import {scanState} from './dist/scan.js';
+import {apply} from './commands.js';
+import {game,currentSkills} from './game.js';
+import {academyLevel,managerLevel,managerRank,skillPoints,ACADEMY_THRESHOLDS} from './progression.js';
+import {leagueStats,calendarStats,playerProfile,knownPlayerIds,bestXI,globalProfile,academyStats,transferStats,squadTrend} from './statistics.js';
+import {museum} from './legacy.js';
+import {PHILOSOPHIES,preset,effective,scoutLimit} from './rules.js';
+import {eventModifiers,pendingEventCount} from './events.js';
+import {scanState} from './scan.js';
 const $=id=>document.getElementById(id);
 export function e(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=String(text);if(cls)n.className=cls;return n}
 export function add(parent,...nodes){parent.append(...nodes);return parent}

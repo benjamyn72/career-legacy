@@ -1,5 +1,5 @@
-import {productionCatalogue} from './dist/catalogue.js';
-import {visibleAchievements,seasonalOptions} from './dist/events.js';
+import {productionCatalogue} from './catalogue.js';
+import {visibleAchievements,seasonalOptions} from './events.js';
 const make=(tag,text)=>{const el=document.createElement(tag);if(text!==undefined)el.textContent=text;return el};
 export function contentSeed(){const a=new Uint32Array(1);do{crypto.getRandomValues(a)}while(!a[0]);return a[0]}
 export function renderContent(s,{dispatch,run}){

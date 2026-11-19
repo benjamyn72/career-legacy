@@ -1,5 +1,5 @@
-import {normalizeReview,normalizeAssisted,assertAssistedScope,scanState,manualDraft} from './dist/scan.js';
-import {sha256} from './dist/storage.js';
+import {normalizeReview,normalizeAssisted,assertAssistedScope,scanState,manualDraft} from './scan.js';
+import {sha256} from './storage.js';
 const $=id=>document.getElementById(id);
 const playerKinds=new Set(['status','stats','attributes','financial','youth']);
 const numberFields=new Set(['number','ovr','age','apps','goals','assists','clean_sheets','rank','played','won','draw','lost','gf','ga','gd','points','potential_min','potential_max','value','wage','fee']);

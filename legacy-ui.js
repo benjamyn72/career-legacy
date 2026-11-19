@@ -1,5 +1,5 @@
-import {globalProfile,leagueStats,calendarStats,playerLeaderboard,bestXI,knownPlayerIds,playerProfile} from './dist/statistics.js';
-import {museum,seasonAwards,yearbookHTML,legacy,MANUAL} from './dist/legacy.js';
+import {globalProfile,leagueStats,calendarStats,playerLeaderboard,bestXI,knownPlayerIds,playerProfile} from './statistics.js';
+import {museum,seasonAwards,yearbookHTML,legacy,MANUAL} from './legacy.js';
 const el=(tag,text)=>{const x=document.createElement(tag);if(text!==undefined)x.textContent=String(text);return x};
 const stat=x=>x===null||x===undefined?'—':String(x);
 function table(root,headers,rows){const t=el('table');t.className='legacy-table';const head=el('tr');for(const h of headers)head.append(el('th',h));t.append(head);for(const row of rows){const tr=el('tr');for(const x of row)tr.append(el('td',stat(x)));t.append(tr)}root.append(t)}
