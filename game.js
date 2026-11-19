@@ -1,3 +1,4 @@
+import { includesCountry, sameCountry } from './identity.js';
 import { eventModifiers } from './events.js';
 import { byId, need, integer, canonical, date, key, prevDay } from './model.js';
 import { validateRule, blankSkills, effective, identity, matchDecision, allowedScout } from './rules.js';
@@ -82,6 +83,8 @@ export function performGame(s, q) {
             need(!g.rules.some(x => x.seasonId === se.id), 'Rulebook locked');
             const old = g.rules.filter(x => byId(s.seasons, x.seasonId).journeyId === j.id).at(-1);
             need(!old || old.rule.primary === q.rule.primary, 'Primary DNA locked');
+            if (old?.rule.dna)
+                need(q.rule.dna && q.rule.dna.homeCountryId === old.rule.dna.homeCountryId && q.rule.dna.regionId === old.rule.dna.regionId && q.rule.dna.regionCountryIds.slice().sort().join(',') === old.rule.dna.regionCountryIds.slice().sort().join(','), 'Geographical DNA locked');
             need(c.gameDate === se.joined, 'Rulebook setup only at season start');
             g.rules.push({ seasonId: se.id, rule: structuredClone(q.rule) });
             break;
@@ -191,7 +194,7 @@ export function performGame(s, q) {
             }
             need(c.gameDate > sp.start, 'Same-day membership review required');
             sp.end = prevDay(c.gameDate);
-            g.transfers.push({ id: q.id, careerId: c.id, journeyId: j.id, seasonId: se.id, windowId: v.w.windowId, playerId: q.playerId, position: q.position, direction: 'out', type: q.exitType, date: c.gameDate, fee: q.fee, skillSlot: false, loan: false });
+            g.transfers.push({ id: q.id, careerId: c.id, journeyId: j.id, seasonId: se.id, windowId: v.w.windowId, playerId: q.playerId, position: q.position, direction: 'out', type: q.exitType, date: c.gameDate, fee: q.fee, ...(q.currency !== undefined ? { currency: q.currency } : {}), skillSlot: false, loan: false });
             break;
         }
         case 'completeSigning': {
@@ -202,13 +205,13 @@ export function performGame(s, q) {
             const v = windowView(s, c.id, q.windowId);
             need(!g.transfers.some(x => x.id === q.id) && !s.spells.some(x => x.id === q.spellId || x.playerId === q.playerId && x.end === null), 'Duplicate signing');
             const previous = g.transfers.filter(x => x.journeyId === j.id && x.seasonId === se.id && x.direction === 'in');
-            const outsideUsed = previous.filter(x => { const n = byId(s.players, x.playerId).nationality; return n !== null && !v.r.region.includes(n); }).length;
+            const outsideUsed = previous.filter(x => { const n = byId(s.players, x.playerId).nationality; return n !== null && !includesCountry(v.r.region, n); }).length;
             const nationality = byId(s.players, q.playerId).nationality;
-            need(nationality === q.signing.country, 'Nationality mismatch');
+            need(nationality === q.signing.country || nationality !== null && q.signing.country !== null && sameCountry(nationality, q.signing.country), 'Nationality mismatch');
             need(signingCheck(v.r, { ...q.signing, outsideUsed, loansUsed: previous.filter(x => x.loan).length }, v.slots, q.eaAllows).allowed, 'Signing disallowed or incomplete');
             need(q.position.trim(), 'Position');
             s.spells.push({ id: q.spellId, playerId: q.playerId, journeyId: j.id, start: c.gameDate, end: null });
-            g.transfers.push({ id: q.id, careerId: c.id, journeyId: j.id, seasonId: se.id, windowId: v.w.windowId, playerId: q.playerId, position: q.position, direction: 'in', type: 'voluntary', date: c.gameDate, fee: q.signing.fee, skillSlot: v.ordinary === 0, loan: q.signing.loan });
+            g.transfers.push({ id: q.id, careerId: c.id, journeyId: j.id, seasonId: se.id, windowId: v.w.windowId, playerId: q.playerId, position: q.position, direction: 'in', type: 'voluntary', date: c.gameDate, fee: q.signing.fee, ...(q.currency !== undefined ? { currency: q.currency } : {}), skillSlot: v.ordinary === 0, loan: q.signing.loan });
             break;
         }
         case 'useTransferVeto': {
@@ -235,7 +238,7 @@ export function performGame(s, q) {
             const r = currentRule(s, se.id), rows = g.academyActions.filter(x => x.seasonId === se.id && x.kind === q.kind);
             need(!g.academyActions.some(x => x.playerId === q.playerId && x.kind === q.kind && byId(s.seasons, x.seasonId).journeyId === j.id), 'Academy action duplicate');
             if (q.kind === 'sign') {
-                need(q.country !== null && q.country === byId(s.players, q.playerId).nationality && allowedScout(r, q.country, true), 'Academy geography');
+                need(q.country !== null && byId(s.players, q.playerId).nationality !== null && sameCountry(q.country, byId(s.players, q.playerId).nationality) && allowedScout(r, q.country, true), 'Academy geography');
                 need(rows.length < Math.max(0, r.academy + eff.academySlots), 'Academy limit');
                 if (r.reportLimit !== null)
                     need(q.reportId !== null && rows.filter(x => x.reportId === q.reportId).length < r.reportLimit, 'Report limit');
@@ -310,6 +313,7 @@ export function validateGame(s) { if (s.game === undefined)
     need(w && date(x.date) >= w.start && x.date <= w.end && ['in', 'out'].includes(x.direction) && ['voluntary', 'pressure', 'eaForced'].includes(x.type), 'Transfer scope');
     if (x.fee !== null)
         integer(x.fee);
+    need(x.currency === undefined || x.currency === null || /^[A-Z]{3}$/.test(x.currency), 'Transfer currency');
     need(typeof x.skillSlot === 'boolean' && typeof x.loan === 'boolean', 'Transfer flags');
 } for (const x of g.protections) {
     const scope = x.permanent ? byId(s.journeys, x.scope) : byId(s.seasons, x.scope);

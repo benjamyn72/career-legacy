@@ -1,3 +1,4 @@
+import { validateDNA, countryName, sameCountry, includesCountry } from './identity.js';
 import { need, integer } from './model.js';
 export const PHILOSOPHIES = ['The Patriots', 'Regional Roots', 'Academy Builders', 'Talent Factory', 'Moneyball', 'Sleeping Giants', 'Underdogs', 'Galacticos', 'Global Football'];
 const limits = [[4, 2, 6], [4, 2, 8], [2, 1, 10], [5, 3, 12], [5, 2, 6], [5, 3, 6], [4, 2, 6], [4, 2, 4], [6, 3, 8]];
@@ -25,7 +26,10 @@ export function preset(primary, domestic, region = [], secondary = null) { const
         Object.assign(r, { ovrAboveAverage: 3, budgetPct: 70, loanMax: 3 });
         break;
 } validateRule(r); return r; }
-export function validateRule(r) { need(PHILOSOPHIES.includes(r.primary) && (r.secondary === null || PHILOSOPHIES.includes(r.secondary) && r.secondary !== r.primary), 'Philosophy'); need(typeof r.domestic === 'string' && r.domestic.trim().length > 0, 'Domestic'); for (const a of [r.region, r.scoutCountries, r.signCountries])
+export function validateRule(r) { if (r.dna) {
+    validateDNA(r.dna);
+    need(sameCountry(r.domestic, countryName(r.dna.homeCountryId)) && r.region.length === r.dna.regionCountryIds.length && r.dna.regionCountryIds.every(x => includesCountry(r.region, countryName(x))), 'DNA / rule geography mismatch');
+} need(PHILOSOPHIES.includes(r.primary) && (r.secondary === null || PHILOSOPHIES.includes(r.secondary) && r.secondary !== r.primary), 'Philosophy'); need(typeof r.domestic === 'string' && r.domestic.trim().length > 0, 'Domestic'); for (const a of [r.region, r.scoutCountries, r.signCountries])
     if (a !== null)
         need(Array.isArray(a) && a.every(x => typeof x === 'string' && x.trim()) && new Set(a).size === a.length, 'Country list'); for (const n of [r.summer, r.winter, r.academy])
     integer(n, 0, 100); for (const n of [r.promotion, r.reportLimit, r.outsideRegionMax, r.wageMax, r.loanMax, r.integrationMin])
@@ -39,7 +43,7 @@ export const blankSkills = () => ({ academy: 0, transfer: 0, tactical: 0, leader
 export function effective(sk, m = {}) { for (const x of Object.values(sk))
     integer(x, 0, 5); for (const x of Object.values(m))
     integer(x, -1000, 1000); const cap = (v, min, max) => Math.max(min, Math.min(v, max)); return { academyXP: cap(sk.academy * 5 + (m.academyXP ?? 0), 0, 75), adultSlots: cap((sk.transfer >= 4 ? 2 : sk.transfer >= 2 ? 1 : 0) + (m.adultSlots ?? 0), -100, 3), academySlots: cap((sk.academy >= 5 ? 2 : sk.academy >= 3 ? 1 : 0) + (m.academySlots ?? 0), -100, 4), pressureReduction: cap((sk.transfer >= 5 ? 15 : sk.transfer >= 3 ? 10 : sk.transfer >= 1 ? 5 : 0) + (m.pressureReduction ?? 0), 0, 30), protection: cap(2 + (sk.leader >= 5 ? 2 : sk.leader >= 3 ? 1 : 0) + (m.protection ?? 0), 0, 4), jokers: cap(sk.tactical + (m.jokers ?? 0), 0, 10), promotions: Math.max(-100, m.promotions ?? 0), identityXP: [0, 5, 10, 10, 20, 25][sk.leader], transferVeto: sk.transfer === 5 }; }
-export function allowedScout(r, country, eaAvailable, exception = false) { return eaAvailable && (r.scoutCountries === null || r.scoutCountries.includes(country) || exception); }
+export function allowedScout(r, country, eaAvailable, exception = false) { return eaAvailable && (r.scoutCountries === null || includesCountry(r.scoutCountries, country) || exception); }
 export function identity(parts) { let total = 0, known = 0, value = 0; for (const p of parts) {
     need(typeof p.active === 'boolean' && Number.isFinite(p.weight) && p.weight >= 0, 'Identity weight');
     if (p.score !== null)

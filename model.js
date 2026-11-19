@@ -1,3 +1,5 @@
+import { validateRpg } from './rpg.js';
+import { validateRoster } from './roster.js';
 import { validateLegacy } from './legacy.js';
 import { validateScan } from './scan.js';
 import { validateEvents } from './events.js';
@@ -28,8 +30,10 @@ export function seasonCheck(s) { date(s.start); date(s.end); date(s.joined); nee
     date(w.start);
     date(w.end);
     need(w.start <= w.end && !ids.has(w.id), 'Invalid window');
+    if (w.kind !== undefined)
+        need(['summer', 'winter'].includes(w.kind) && w.start <= s.end && w.end >= s.start, 'Window kind/date');
     ids.add(w.id);
-} }
+} const typed = s.windows.filter(w => w.kind !== undefined); need(new Set(typed.map(w => w.kind)).size === typed.length && typed.every((a, i) => typed.slice(i + 1).every(b => a.end < b.start || b.end < a.start)), 'Overlapping or duplicate typed windows'); }
 export function slotCount(mode, ordinal) { integer(ordinal, 1, 12); need(MODES.includes(mode), 'Invalid mode'); return mode === 'Chaos' ? 2 : mode === 'Entertainment' ? 1 : mode === 'Balanced' ? Number(ordinal % 2 === 0) : Number(ordinal % 3 === 0); }
 export function canonical(v) { if (v === null || typeof v === 'string' || typeof v === 'boolean')
     return JSON.stringify(v); if (typeof v === 'number') {
@@ -190,6 +194,8 @@ export function validate(s) {
     validateEvents(s);
     validateScan(s);
     validateLegacy(s);
+    validateRoster(s);
+    validateRpg(s);
     canonical(s);
     return s;
 }

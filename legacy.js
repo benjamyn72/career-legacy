@@ -1,3 +1,4 @@
+import { lineupKey, validateLineup } from './lineups.js';
 import { byId, need, canonical, integer, label, date, key } from './model.js';
 import { game } from './game.js';
 import { knownPlayerIds, playerProfile, playerLeaderboard, leagueStats, calendarStats, squadTrend, bestXI, trophies, transferStats, recordRoom, academyStats, measure } from './statistics.js';
@@ -5,6 +6,12 @@ import { playerTraits } from './squad.js';
 export const AUTO = ['Golden Boot', 'Golden Glove', 'Playmaker', 'Most Improved', 'Iron Man'];
 export const MANUAL = ['Player of the Season', 'Golden Boy', 'Signing of the Season', 'Puskás'];
 const FACT_KINDS = ['Captain', 'Club Legend', 'Record Breaker', 'Farewell'];
+export function validateMuseumImage(image) { need(typeof image === 'string' && image.length <= 200000 && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(image), 'Invalid or oversized museum photo'); const [mime, encoded] = image.split(','); let bytes; try {
+    bytes = atob(encoded);
+}
+catch {
+    throw Error('Invalid photo encoding');
+} need((mime.includes('jpeg') && bytes.startsWith('\xff\xd8\xff')) || (mime.includes('png') && bytes.startsWith('\x89PNG\r\n\x1a\n')) || (mime.includes('webp') && bytes.startsWith('RIFF') && bytes.slice(8, 12) === 'WEBP'), 'Photo image header mismatch'); }
 const fresh = () => ({ version: 1, coverage: [], awards: [], cards: [], portraits: [], jerseys: [], yearbooks: [] });
 export const legacy = (s) => s.legacy ?? fresh();
 const seasonPlayers = (s, sid) => knownPlayerIds(s, sid);
@@ -16,7 +23,32 @@ function fullAwards(s, sid) { const se = byId(s.seasons, sid), l = legacy(s), co
 export function seasonAwards(s, sid) { byId(s.seasons, sid); return [...fullAwards(s, sid), ...legacy(s).awards.filter(x => x.seasonId === sid && x.manual)]; }
 export function traitsFor(s, pid, sid) { const se = byId(s.seasons, sid), p = playerProfile(s, pid, { seasonId: sid }), st = p.rows[0]?.stat; const j = playerProfile(s, pid, { journeyId: se.journeyId }); const cov = legacy(s).coverage.find(x => x.seasonId === sid); const prior = s.seasons.filter(x => x.journeyId === se.journeyId && x.end < se.joined).sort((a, b) => a.end.localeCompare(b.end)).at(-1); const past = prior ? s.stats.find(x => x.playerId === pid && x.seasonId === prior.id && x.scope === 'total') : null; const history = p.history.filter(x => x.ovr !== null); const full = s.seasons.filter(x => x.journeyId === se.journeyId && x.closed && !x.left && x.joined === x.start && s.spells.some(sp => sp.playerId === pid && sp.journeyId === se.journeyId && sp.start <= x.start && (sp.end === null || sp.end >= x.end)) && x.end <= se.end).length; return playerTraits({ age: p.history.at(-1)?.age ?? null, ovrStart: history[0]?.date === se.joined ? history[0].ovr : null, ovrEnd: history.at(-1)?.date === (se.left ?? se.end) ? history.at(-1).ovr : null, apps: st?.apps ?? null, teamMatches: cov?.teamMatches ?? null, priorApps: past?.apps ?? null, priorTeamMatches: legacy(s).coverage.find(x => x.seasonId === prior?.id)?.teamMatches ?? null, goals: st?.goals ?? null, assists: st?.assists ?? null, cleanSheets: st?.cleanSheets ?? null, goalkeeper: p.history.filter(x => x.position !== null).at(-1)?.position === 'GK', homegrown: j.homegrown, clubApps: measure(j.rows.filter(r => byId(s.seasons, r.seasonId).joined <= se.joined).map(r => r.stat?.apps ?? null)).value, fullSeasons: full }); }
 export function buildYearbook(s, sid) { const se = byId(s.seasons, sid), j = byId(s.journeys, se.journeyId), c = byId(s.careers, se.careerId), q = { seasonId: sid }; return { seasonId: sid, club: j.club, edition: c.edition, start: se.joined, end: se.left ?? se.end, partial: se.joined !== se.start || se.left !== null, league: leagueStats(s, sid), calendar: calendarStats(s, q), leaderboards: { goals: playerLeaderboard(s, 'goals', q), assists: playerLeaderboard(s, 'assists', q), apps: playerLeaderboard(s, 'apps', q) }, awards: seasonAwards(s, sid), bestXI: bestXI(s, q), trophies: trophies(s, q), transfers: transferStats(s, q), squadTrend: squadTrend(s, sid), coverage: 'Known observations; league and calendar not added' }; }
-export function performLegacy(s, q) { const c = byId(s.careers, q.careerId); need(c.status === 'Active', 'Career must be Active'); const l = s.legacy ?? (s.legacy = fresh()); if (q.type === 'legacyFact') {
+export function performLegacy(s, q) { const c = byId(s.careers, q.careerId); need(c.status === 'Active', 'Career must be Active'); const l = s.legacy ?? (s.legacy = fresh()); if (q.type === 'saveBestXI' || q.type === 'resetBestXI') {
+    need(byId(s.journeys, q.lineup.journeyId).careerId === c.id, 'Lineup career scope');
+    validateLineup(s, q.lineup, q.type === 'saveBestXI');
+    l.lineups = (l.lineups ?? []).filter(x => lineupKey(x) !== lineupKey(q.lineup));
+    if (q.type === 'saveBestXI')
+        l.lineups.push(structuredClone(q.lineup));
+    return;
+} if (q.type === 'addMuseumPhoto') {
+    const p = q.photo, se = byId(s.seasons, p.seasonId);
+    need(q.confirmed && se.careerId === c.id, 'Photo scope or confirmation');
+    key(p.id);
+    label(p.caption);
+    date(p.date);
+    need(p.date >= se.joined && p.date <= (se.left ?? se.end) && p.date <= c.gameDate, 'Photo date');
+    validateMuseumImage(p.image);
+    const photos = l.photos ?? (l.photos = []);
+    need(!photos.some(x => x.id === p.id), 'Duplicate photo');
+    need(photos.length < 100 && photos.reduce((a, x) => a + x.image.length, 0) + p.image.length <= 6000000, 'Museum photo storage limit');
+    photos.push(p);
+    return;
+} if (q.type === 'removeMuseumPhoto') {
+    const p = (l.photos ?? []).find(x => x.id === q.photoId);
+    need(q.confirmed && p && byId(s.seasons, p.seasonId).careerId === c.id, 'Photo scope or confirmation');
+    l.photos = l.photos.filter(x => x.id !== q.photoId);
+    return;
+} if (q.type === 'legacyFact') {
     const se = byId(s.seasons, q.seasonId);
     need(se.careerId === c.id && seasonPlayers(s, se.id).includes(q.playerId), 'Legacy fact scope');
     need(FACT_KINDS.includes(q.kind) && typeof q.confirmed === 'boolean', 'Legacy fact kind');
@@ -114,7 +146,23 @@ export function autoYearbook(s, seasonId) { const se = byId(s.seasons, seasonId)
     l.yearbooks.push({ seasonId, revision: s.revision + 1, data: buildYearbook(s, seasonId) }); }
 export function validateLegacy(s) { if (!s.legacy)
     return; const l = s.legacy; need(l.version === 1, 'Legacy schema'); for (const a of [l.coverage, l.awards, l.cards, l.portraits, l.jerseys, l.yearbooks])
-    need(Array.isArray(a), 'Legacy table'); const unique = (a) => need(a.length === new Set(a).size, 'Duplicate legacy entry'); unique(l.coverage.map(x => x.seasonId)); unique(l.awards.map(x => JSON.stringify([x.seasonId, x.kind]))); unique(l.cards.map(x => x.id)); unique(l.yearbooks.map(x => x.seasonId)); unique(l.portraits.map(x => x.playerId)); if (l.facts !== undefined) {
+    need(Array.isArray(a), 'Legacy table'); const unique = (a) => need(a.length === new Set(a).size, 'Duplicate legacy entry'); if (l.lineups !== undefined) {
+    need(Array.isArray(l.lineups), 'Lineup table');
+    unique(l.lineups.map(lineupKey));
+    for (const row of l.lineups)
+        validateLineup(s, row, false);
+} if (l.photos !== undefined) {
+    need(Array.isArray(l.photos) && l.photos.length <= 100 && l.photos.reduce((a, x) => a + x.image.length, 0) <= 6000000, 'Photo table or size');
+    unique(l.photos.map(x => x.id));
+    for (const p of l.photos) {
+        key(p.id);
+        label(p.caption);
+        date(p.date);
+        const se = byId(s.seasons, p.seasonId);
+        need(p.date >= se.joined && p.date <= (se.left ?? se.end) && p.date <= byId(s.careers, se.careerId).gameDate, 'Photo date');
+        validateMuseumImage(p.image);
+    }
+} unique(l.coverage.map(x => x.seasonId)); unique(l.awards.map(x => JSON.stringify([x.seasonId, x.kind]))); unique(l.cards.map(x => x.id)); unique(l.yearbooks.map(x => x.seasonId)); unique(l.portraits.map(x => x.playerId)); if (l.facts !== undefined) {
     need(Array.isArray(l.facts), 'Legacy facts table');
     unique(l.facts.map(x => canonical([x.seasonId, x.playerId, x.kind])));
     for (const x of l.facts) {
@@ -152,6 +200,6 @@ export function validateLegacy(s) { if (!s.legacy)
     need(byId(s.seasons, y.seasonId).closed && y.data.seasonId === y.seasonId, 'Yearbook scope');
     integer(y.revision, 1, s.revision);
 } canonical(l); }
-export function museum(s, journeyId) { const j = byId(s.journeys, journeyId), q = { journeyId }, ss = s.seasons.filter(x => x.journeyId === journeyId); const ids = new Set(ss.map(x => x.id)); return { club: j.club, trophies: trophies(s, q), records: recordRoom(s, q), academy: academyStats(s, q), cards: cardGallery(s).filter(x => x.journeyId === journeyId), hallOfFame: game(s).facts.filter(x => x.journeyId === journeyId && x.milestone === 'legend' && x.achieved).map(x => byId(s.players, x.playerId)), timeline: ss.map(x => ({ seasonId: x.id, start: x.joined, end: x.left ?? x.end, closed: x.closed, league: leagueStats(s, x.id), prestige: game(s).prestige.find(p => p.seasonId === x.id) ?? null })), yearbooks: legacy(s).yearbooks.filter(x => ids.has(x.seasonId)).map(x => ({ ...x, stale: canonical(x.data) !== canonical(buildYearbook(s, x.seasonId)) })), jerseys: legacy(s).jerseys.filter(x => x.journeyId === journeyId) }; }
-export function yearbookHTML(s, sid) { const entry = legacy(s).yearbooks.find(x => x.seasonId === sid); need(entry, 'Capture yearbook first'); const b = entry.data; const esc = (x) => String(x ?? '—').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); const row = (a) => '<tr>' + a.map(x => '<td>' + esc(x) + '</td>').join('') + '</tr>'; const table = (head, rows) => '<table><thead>' + row(head) + '</thead><tbody>' + rows.map(row).join('') + '</tbody></table>'; return '<!doctype html><html lang="en"><meta charset="utf-8"><title>Career Legacy Yearbook</title><style>body{font:15px system-ui;color:#142e23;max-width:850px;margin:32px auto;padding:20px}h1{color:#24503b;border-bottom:3px solid #d4b477}table{border-collapse:collapse;width:100%;margin:16px 0}td{padding:8px;border-bottom:1px solid #ddd}thead{font-weight:bold}section{break-inside:avoid}small{color:#555}@media print{button{display:none}body{margin:0;padding:0}}</style><h1>' + esc(b.club) + ' · Season Yearbook</h1><p>' + esc(b.edition) + ' | ' + esc(b.start) + ' — ' + esc(b.end) + (b.partial ? ' · partial tenure' : '') + '</p><small>' + esc(b.coverage) + '</small><h2>League</h2>' + table(['Played', 'W', 'D', 'L', 'GF', 'GA', 'Pts', 'Rank'], [[b.league?.played, b.league?.wins, b.league?.draws, b.league?.losses, b.league?.gf, b.league?.ga, b.league?.points, b.league?.rank]]) + '<h2>Observed calendar</h2>' + table(['Played', 'W', 'D', 'L', 'GF', 'GA'], [[b.calendar.played, b.calendar.wins, b.calendar.draws, b.calendar.losses, b.calendar.gf, b.calendar.ga]]) + '<h2>Scorers · observed</h2>' + table(['Player', 'Goals', 'Known rows'], b.leaderboards.goals.map(x => [x.name, x.value, x.known + '/' + x.expected])) + '<h2>Playmakers · observed</h2>' + table(['Player', 'Assists'], b.leaderboards.assists.map(x => [x.name, x.value])) + '<h2>Awards</h2>' + table(['Award', 'Player'], b.awards.map(a => [a.kind, a.playerIds.map(id => byId(s.players, id).name).join(', ')])) + '<h2>Trophies</h2>' + table(['Competition'], b.trophies.map(t => [t.kind])) + '<h2>Best XI suggestion</h2>' + table(['Position', 'Player', 'OVR'], b.bestXI.map(x => [x.slot, x.player?.name, x.player?.ovr])) + '<h2>Transfers · reviewed sources</h2>' + table(['Player', 'Date', 'Direction', 'Fee', 'Currency'], b.transfers.observations.map(t => [t.name, t.date, t.direction, t.fee, t.currency])) + '</html>'; }
+export function museum(s, journeyId) { const j = byId(s.journeys, journeyId), q = { journeyId }, ss = s.seasons.filter(x => x.journeyId === journeyId); const ids = new Set(ss.map(x => x.id)); return { club: j.club, photos: (legacy(s).photos ?? []).filter(x => ids.has(x.seasonId)), trophies: trophies(s, q), records: recordRoom(s, q), academy: academyStats(s, q), cards: cardGallery(s).filter(x => x.journeyId === journeyId), hallOfFame: game(s).facts.filter(x => x.journeyId === journeyId && x.milestone === 'legend' && x.achieved).map(x => byId(s.players, x.playerId)), timeline: ss.map(x => ({ seasonId: x.id, start: x.joined, end: x.left ?? x.end, closed: x.closed, league: leagueStats(s, x.id), prestige: game(s).prestige.find(p => p.seasonId === x.id) ?? null })), yearbooks: legacy(s).yearbooks.filter(x => ids.has(x.seasonId)).map(x => ({ ...x, stale: canonical(x.data) !== canonical(buildYearbook(s, x.seasonId)) })), jerseys: legacy(s).jerseys.filter(x => x.journeyId === journeyId) }; }
+export function yearbookHTML(s, sid) { const entry = legacy(s).yearbooks.find(x => x.seasonId === sid); need(entry, 'Capture yearbook first'); const b = entry.data; const esc = (x) => String(x ?? '—').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); const row = (a) => '<tr>' + a.map(x => '<td>' + esc(x) + '</td>').join('') + '</tr>'; const table = (head, rows) => '<table><thead>' + row(head) + '</thead><tbody>' + rows.map(row).join('') + '</tbody></table>'; return '<!doctype html><html lang="en"><meta charset="utf-8"><title>Career Legacy Yearbook</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>:root{--green:#142e23;--gold:#a4864f;--ink:#233b2e}*{box-sizing:border-box}body{font:14px system-ui;color:var(--ink);background:#f4f1e9;max-width:880px;margin:24px auto;padding:24px}header{padding:32px 24px;border:2px solid var(--gold);background:var(--green);color:#f1ede3;text-align:center;border-radius:12px}header h1{font:700 30px Georgia,serif;color:#e4c88f;margin:16px 0}header p{margin:10px 0}.eyebrow{font-size:11px;letter-spacing:.22em;color:#d4b477;font-weight:700}h2{font:700 21px Georgia,serif;border-bottom:1px solid #baab88;padding-bottom:8px;margin:28px 0 10px}table{border-collapse:collapse;width:100%;margin:12px 0;background:#fffdf8;font-size:13px}td{padding:8px;border-bottom:1px solid #ddd;overflow-wrap:anywhere}thead{font-weight:bold;background:#e0e8dd}small{color:#526353}header small{color:#d9e1d6}tr{break-inside:avoid}footer{margin:28px 0;text-align:center;letter-spacing:.14em;color:var(--gold);font-size:10px}@media(max-width:500px){body{padding:8px}td{padding:5px;font-size:11px}}@media print{body{background:white;margin:0;padding:0}header{print-color-adjust:exact;-webkit-print-color-adjust:exact}h2{break-after:avoid}thead{display:table-header-group}}</style><header><div class="eyebrow">CAREER LEGACY · THE ARCHIVE</div><h1>' + esc(b.club) + ' · Season Yearbook</h1><p>' + esc(b.edition) + ' | ' + esc(b.start) + ' — ' + esc(b.end) + (b.partial ? ' · partial tenure' : '') + '</p><small>' + esc(b.coverage) + '</small></header><h2>League</h2>' + table(['Played', 'W', 'D', 'L', 'GF', 'GA', 'Pts', 'Rank'], [[b.league?.played, b.league?.wins, b.league?.draws, b.league?.losses, b.league?.gf, b.league?.ga, b.league?.points, b.league?.rank]]) + '<h2>Observed calendar</h2>' + table(['Played', 'W', 'D', 'L', 'GF', 'GA'], [[b.calendar.played, b.calendar.wins, b.calendar.draws, b.calendar.losses, b.calendar.gf, b.calendar.ga]]) + '<h2>Scorers · observed</h2>' + table(['Player', 'Goals', 'Known rows'], b.leaderboards.goals.map(x => [x.name, x.value, x.known + '/' + x.expected])) + '<h2>Playmakers · observed</h2>' + table(['Player', 'Assists'], b.leaderboards.assists.map(x => [x.name, x.value])) + '<h2>Awards</h2>' + table(['Award', 'Player'], b.awards.map(a => [a.kind, a.playerIds.map(id => byId(s.players, id).name).join(', ')])) + '<h2>Trophies</h2>' + table(['Competition'], b.trophies.map(t => [t.kind])) + '<h2>Best XI suggestion</h2>' + table(['Position', 'Player', 'OVR'], b.bestXI.map(x => [x.slot, x.player?.name, x.player?.ovr])) + '<h2>Transfers · reviewed sources</h2>' + table(['Player', 'Date', 'Direction', 'Fee', 'Currency'], b.transfers.observations.map(t => [t.name, t.date, t.direction, t.fee, t.currency])) + '<footer>EVERY SEASON LEAVES A LEGACY</footer></html>'; }
 export function newsroom(s, journeyId) { const j = byId(s.journeys, journeyId); const q = { journeyId }; return [...trophies(s, q).map(t => ({ id: `trophy:${t.seasonId}:${t.kind}`, date: byId(s.seasons, t.seasonId).end, title: `${j.club} · ${t.kind}`, type: 'trophy' })), ...transferStats(s, q).observations.map(t => ({ id: `transfer:${t.seasonId}:${t.id}`, date: t.date, title: `${t.name} · ${t.direction === 'in' ? 'Arrival' : 'Departure'}`, type: 'transfer' }))].sort((a, b) => b.date.localeCompare(a.date) || a.id.localeCompare(b.id)); }

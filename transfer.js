@@ -1,3 +1,4 @@
+import { includesCountry } from './identity.js';
 import { need, integer } from './model.js';
 import { PHILOSOPHIES, PH_PRESSURE } from './rules.js';
 import { loyalty } from './progression.js';
@@ -14,13 +15,13 @@ export function signingCheck(r, x, slots, eaAllows, geoException = false) { inte
     if (r.signCountries !== null) {
         if (x.country === null)
             unknown.push('Nationality');
-        else if (!r.signCountries.includes(x.country))
+        else if (!includesCountry(r.signCountries, x.country))
             denied.push('Nationality');
     }
     if (r.outsideRegionMax !== null) {
         if (x.country === null)
             unknown.push('Region');
-        else if (!r.region.includes(x.country) && x.outsideUsed >= r.outsideRegionMax)
+        else if (!includesCountry(r.region, x.country) && x.outsideUsed >= r.outsideRegionMax)
             denied.push('Region quota');
     }
 } if (r.ageMax !== null) {

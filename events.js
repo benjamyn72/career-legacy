@@ -1,3 +1,5 @@
+import { gameplayStats } from './roster.js';
+import { scanState } from './scan.js';
 import { byId, need, integer, key, date, canonical, monthDiff } from './model.js';
 import { PHILOSOPHIES } from './rules.js';
 import { game, award } from './game.js';
@@ -87,7 +89,7 @@ const RESULT_METRICS = ['seasonGoals', 'seasonApps', 'seasonWins', 'seasonAssist
 const GLOBAL_METRICS = ['careerGoals', 'careerAssists', 'careerApps', 'careerWins', 'fullSeasons', 'clubs', 'trophies', 'leagueTitles', 'continentalTitles', 'promotions', 'youthDebuts', 'youth80', 'youth90', 'youthCaptains', 'academyPromotions', 'signings', 'sales', 'prestigeUpgrades', 'editions', 'careers'];
 const fullSeason = (x) => x.closed && x.left === null && x.joined === x.start;
 function metric(s, cid, p, seasonId) {
-    const c = byId(s.careers, cid), j = byId(s.journeys, c.journeyId), sid = seasonId ?? c.seasonId, g = game(s), ss = s.seasons.filter(x => x.careerId === cid), js = s.journeys.filter(x => x.careerId === cid), ids = new Set(ss.map(x => x.id)), rows = s.stats.filter(x => x.scope === 'total' && ids.has(x.seasonId));
+    const c = byId(s.careers, cid), j = byId(s.journeys, c.journeyId), sid = seasonId ?? c.seasonId, g = game(s), ss = s.seasons.filter(x => x.careerId === cid), js = s.journeys.filter(x => x.careerId === cid), ids = new Set(ss.map(x => x.id)), rows = gameplayStats(s, s.stats.filter(x => x.scope === 'total' && ids.has(x.seasonId)));
     const facts = g.xp.filter(x => x.kind === 'manager' && x.scope === cid && x.active), sport = (k) => facts.filter(x => x.id.startsWith('sport:') && k.some(t => x.id.endsWith(':' + t))).length;
     const sumKnown = (a) => a.some(x => x !== null) ? a.reduce((n, x) => n + (x ?? 0), 0) : null; // observed lower bound for nonnegative cumulative facts, no zero substitution in storage
     const maxKnown = (a) => a.some(x => x !== null) ? Math.max(...a.filter((x) => x !== null)) : null;
@@ -115,14 +117,8 @@ function metric(s, cid, p, seasonId) {
             const f = p.metric === 'careerGoals' ? 'goals' : p.metric === 'careerApps' ? 'apps' : 'assists';
             return sumKnown(rows.map(x => x[f]));
         }
-        case 'seasonWins': {
-            const ms = s.matches.filter(x => x.seasonId === sid);
-            return ms.length ? ms.filter(x => x.gf > x.ga).length : null;
-        }
-        case 'careerWins': {
-            const ms = s.matches.filter(x => x.careerId === cid);
-            return ms.length ? ms.filter(x => x.gf > x.ga).length : null;
-        }
+        case 'seasonWins': return knownSeasonWins(s, sid);
+        case 'careerWins': return sumKnown(ss.map(x => knownSeasonWins(s, x.id)));
         case 'youthDebuts': return facts.filter(x => x.id.endsWith(':debut')).length;
         case 'youth80': return facts.filter(x => x.id.endsWith(':ovr80')).length;
         case 'youth90': return facts.filter(x => x.id.endsWith(':ovr90')).length;
@@ -141,6 +137,16 @@ function metric(s, cid, p, seasonId) {
         case 'sales': return g.transfers.filter(x => x.careerId === cid && x.direction === (p.metric === 'signings' ? 'in' : 'out') && !x.loan).length;
         case 'prestigeUpgrades': return g.prestige.filter(x => ids.has(x.seasonId) && x.after > x.before).length;
     }
+}
+// League totals are a documented lower bound for competitive wins. They may
+// include pre-manager matches in a partial season, so only use for full-start tenure.
+function knownSeasonWins(s, sid) {
+    const se = byId(s.seasons, sid), j = byId(s.journeys, se.journeyId), norm = (v) => v.normalize('NFKC').trim().toLowerCase();
+    const matches = s.matches.filter(m => m.seasonId === sid && m.competition !== null && !/friendly|friendlies|barátságos|pre.?season/i.test(m.competition));
+    const calendar = matches.length ? matches.filter(m => m.gf > m.ga).length : null;
+    const rows = se.joined === se.start ? scanState(s).records.filter(x => x.seasonId === sid && x.kind === 'league' && typeof x.cells.club === 'string' && norm(x.cells.club) === norm(j.club)).sort((a, b) => a.observedOn.localeCompare(b.observedOn)) : [];
+    const w = rows.at(-1)?.cells.won, league = typeof w === 'number' ? w : null;
+    return calendar === null && league === null ? null : Math.max(calendar ?? 0, league ?? 0);
 }
 const met = (s, cid, p, sid) => !p || (metric(s, cid, p, sid) ?? -1) >= p.min;
 const SEASON_METRICS = ['seasonGoals', 'seasonApps', 'seasonWins', 'seasonAssists', 'playerSeasonGoals', 'playerSeasonAssists', 'playerSeasonApps', 'playerSeasonCleanSheets'];
@@ -193,10 +199,47 @@ function eligible(s, cid, d, kind, story = false) { const c = byId(s.careers, ci
     if (d.effect.duration === 'season' && (byId(s.seasons, c.seasonId).closed || c.gameDate > byId(s.seasons, c.seasonId).end))
         return false;
 } return true; }
-export function goalAvailable(s, cid, d) { const c = byId(s.careers, cid), j = byId(s.journeys, c.journeyId), a = d.availability; if (!a)
-    return true; const r = game(s).rules.find(x => x.seasonId === c.seasonId)?.rule; return (a.minPrestige === undefined || j.prestige >= a.minPrestige) && (a.maxPrestige === undefined || j.prestige <= a.maxPrestige) && (!a.philosophies || !!r && a.philosophies.includes(r.primary)); }
+export function goalAvailable(s, cid, d) { const c = byId(s.careers, cid), j = byId(s.journeys, c.journeyId), a = d.availability; const r = game(s).rules.find(x => x.seasonId === c.seasonId)?.rule; if (d.id === 'CL-G-010' && r?.dna && /^(laliga|la liga|serie a|premier league|bundesliga|eredivisie|ligue 1|primeira liga|nb i|hnl|eliteserien|mls)$/i.test(r.dna.league.trim()))
+    return false; if (!a)
+    return true; return (a.minPrestige === undefined || j.prestige >= a.minPrestige) && (a.maxPrestige === undefined || j.prestige <= a.maxPrestige) && (!a.philosophies || !!r && a.philosophies.includes(r.primary)); }
 export function seasonalOptions(s, cid) { return cat(s, cid).goals.filter(d => d.kind === 'seasonal' && goalAvailable(s, cid, d)); }
 export function visibleAchievements(s, cid) { const catalogue = cat(s, cid), ev = events(s); return catalogue.achievements.flatMap(d => { const earned = ev.achievements.find(x => x.definitionId === d.id && x.catalogueVersion === catalogue.version && x.careerId === (d.scope === 'global' ? null : cid))?.active ?? false; return d.secret && !earned ? [] : [{ id: d.id, title: d.title ?? d.id, category: d.category ?? '', tier: d.tier, scope: d.scope, text: d.text, earned, manual: d.manual }]; }); }
+export function objectiveProgress(s, cid, id) {
+    const g = byId(events(s).goals, id);
+    need(g.careerId === cid, 'Goal owner');
+    const d = byId(cat(s, cid).goals, g.definitionId), p = d.predicate;
+    const value = p ? metric(s, cid, p, g.seasonId) : null;
+    return { value, target: p?.min ?? null, metric: p?.metric ?? null, criteriaMet: !p || (value !== null && value >= p.min), rewardXP: d.kind === 'legacy' ? 500 : ({ Easy: 100, Medium: 200, Hard: 300 })[d.difficulty], pack: d.kind === 'legacy' ? 'Elite' : d.difficulty === 'Hard' ? 'Premium' : 'Reward' };
+}
+export function cardActivationBlock(s, cid, id) {
+    const x = byId(events(s).cards, id), c = byId(s.careers, cid);
+    need(x.careerId === cid, 'Card owner');
+    const d = cardDef(s, x);
+    if (!['stored', 'decision'].includes(x.status))
+        return 'A lap már nem aktiválható.';
+    if (x.journeyId !== c.journeyId)
+        return 'Másik klubidőszakhoz tartozik.';
+    if (d.effect.kind === 'modifier' && d.effect.duration === 'window' && !activeWindow(s, cid))
+        return 'Csak aktív átigazolási ablakban használható.';
+    if (['modifier', 'restriction'].includes(d.effect.kind) && timedCount(s, cid) >= 3)
+        return 'Mindhárom időszakos hatáshely foglalt.';
+    if (!eligible(s, cid, d, 'Event', true))
+        return 'Jelenleg nem teljesülnek a lap alkalmazási feltételei.';
+    return null;
+}
+export function rewardPackBlock(s, cid, id) {
+    const p = byId(events(s).packs, id);
+    need(p.careerId === cid, 'Pack owner');
+    if (p.status !== 'unopened')
+        return 'A csomag nem bontható.';
+    if (pendingEventCount(s, cid))
+        return 'Először az esedékes eseményt bontsd ki.';
+    if (events(s).cards.some(x => x.careerId === cid && x.status === 'decision'))
+        return 'Először dönts a felfedett lapról.';
+    const r = events(s).rng.find(x => x.careerId === cid);
+    const pool = cat(s, cid).cards.filter(d => eligible(s, cid, d, p.kind) && PACK_ODDS[p.kind][RARITIES.indexOf(d.rarity)] > 0 && ((r?.misses ?? 0) < 60 || d.rarity === 'Mythic'));
+    return pool.length ? null : 'Jelenleg nincs alkalmazható lap; a csomag megmarad.';
+}
 export function pendingEventCount(s, cid) { return s.entitlements.filter(e => e.careerId === cid && !events(s).draws.some(d => d.id === e.id)).length; }
 function grantPack(s, cid, source, kind) { const ev = ensure(s); const old = ev.packs.find(x => x.careerId === cid && x.source === source); if (old) {
     need(old.kind === kind, 'Pack reward mismatch');
@@ -348,13 +391,13 @@ export function performEvent(s, q) {
         }
         case 'addLegacyGoal': {
             const d = byId(catalogue.goals, q.definitionId);
-            need(d.kind === 'legacy' && ev.goals.filter(x => x.careerId === c.id && x.seasonId === null && x.status === 'active').length < 3 && !ev.goals.some(x => x.careerId === c.id && x.definitionId === d.id), 'Legacy goals cap/duplicate');
+            need(d.kind === 'legacy' && goalAvailable(s, c.id, d) && ev.goals.filter(x => x.careerId === c.id && x.seasonId === null && x.status === 'active').length < 3 && !ev.goals.some(x => x.careerId === c.id && x.definitionId === d.id), 'Legacy goals cap/duplicate');
             ev.goals.push({ id: `legacy:${c.id}:${d.id}`, careerId: c.id, seasonId: null, definitionId: d.id, status: 'active', confirmed: false });
             break;
         }
         case 'confirmGoal': {
             const g = byId(ev.goals, q.goalId);
-            need(g.careerId === c.id && g.status === 'active' && q.confirmed === true && byId(catalogue.goals, g.definitionId).manual, 'Goal not confirmable');
+            need(g.careerId === c.id && g.status === 'active' && (g.seasonId === null || g.seasonId === c.seasonId) && q.confirmed === true && byId(catalogue.goals, g.definitionId).manual, 'Goal not confirmable');
             g.confirmed = true;
             break;
         }

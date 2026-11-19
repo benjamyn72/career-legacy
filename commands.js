@@ -1,3 +1,6 @@
+import { performRpg, reconcileRpg } from './rpg.js';
+import { performMarket } from './market.js';
+import { performRoster, performCycle } from './roster.js';
 import { performLegacy, reconcileLegacy, autoYearbook } from './legacy.js';
 import { productionCatalogue } from './catalogue.js';
 import { performScan } from './scan.js';
@@ -31,6 +34,11 @@ function perform(s, q) {
             s.profile.activeCareerId = q.careerId;
             if (q.catalogueSeed !== undefined)
                 performEvent(s, { type: 'pinCatalogue', careerId: q.careerId, catalogue: productionCatalogue(), seed: q.catalogueSeed });
+            if (q.rule)
+                performGame(s, { type: 'configureRules', careerId: q.careerId, rule: q.rule });
+            for (const w of se.windows)
+                if (w.kind)
+                    performGame(s, { type: 'registerWindow', careerId: q.careerId, windowId: w.id, kind: w.kind });
             break;
         }
         case 'select':
@@ -47,6 +55,18 @@ function perform(s, q) {
             need(!byId(s.seasons, c.seasonId).closed, 'Season closed');
             need(p.due.length <= 1, 'Close months in order; cannot skip a pending month');
             c.gameDate = q.to;
+            break;
+        }
+        case 'reviewMonth': {
+            const c = live(s, q.careerId);
+            need(q.confirmed, 'Confirmation required');
+            if (s.closures.some(x => x.careerId === c.id && x.month === q.month))
+                break;
+            need(c.nextMonth === q.month, 'Only next month can close');
+            const to = shiftMonth(q.month, 1) + '-01';
+            if (c.gameDate < to)
+                perform(s, { type: 'advance', careerId: c.id, to });
+            perform(s, { type: 'closeMonth', careerId: c.id, month: q.month, source: 'manual', confirmed: true });
             break;
         }
         case 'closeMonth': {
@@ -97,6 +117,11 @@ function perform(s, q) {
             s.seasons.push(newSeason(q.season, c.id, q.journeyId, c.gameDate));
             c.journeyId = q.journeyId;
             c.seasonId = q.season.id;
+            if (q.rule)
+                performGame(s, { type: 'configureRules', careerId: c.id, rule: q.rule });
+            for (const w of q.season.windows)
+                if (w.kind)
+                    performGame(s, { type: 'registerWindow', careerId: c.id, windowId: w.id, kind: w.kind });
             break;
         }
         case 'closeSeason': {
@@ -128,6 +153,11 @@ function perform(s, q) {
             unique(s.seasons, q.season.id);
             s.seasons.push(newSeason(q.season, c.id, c.journeyId, c.gameDate));
             c.seasonId = q.season.id;
+            if (q.rule)
+                performGame(s, { type: 'configureRules', careerId: c.id, rule: q.rule });
+            for (const w of q.season.windows)
+                if (w.kind)
+                    performGame(s, { type: 'registerWindow', careerId: c.id, windowId: w.id, kind: w.kind });
             break;
         }
         case 'addPlayer': {
@@ -193,7 +223,24 @@ function perform(s, q) {
             s.imports.push({ id: q.importId, careerId: c.id, seasonId: se.id, sourceHash: q.sourceHash, kind: 'calendar', matchIds: q.matches.map(x => x.id) });
             break;
         }
+        case 'setManagerHighlights':
+        case 'recordManagerEvidence':
+            performRpg(s, q);
+            break;
+        case 'recordIncoming':
+            performMarket(s, q);
+            break;
+        case 'configureAcademyScouts':
+        case 'newTalent':
+        case 'promoteTalent':
+        case 'setPortrait':
+            performRoster(s, q);
+            break;
         case 'commitScan': {
+            if (q.cycle) {
+                performCycle(s, q, q.cycle);
+                break;
+            }
             if (q.advanceTo !== undefined) {
                 const c = live(s, q.careerId);
                 need(q.confirmed === true && q.seasonId === c.seasonId && q.closeMonth !== null && q.documents.some(d => d.kind === 'calendar' && d.month === q.closeMonth), 'Explicit current monthly review required for date advance');
@@ -220,6 +267,10 @@ function perform(s, q) {
         case 'confirmAchievement':
             performEvent(s, q);
             break;
+        case 'saveBestXI':
+        case 'resetBestXI':
+        case 'addMuseumPhoto':
+        case 'removeMuseumPhoto':
         case 'legacyFact':
         case 'confirmAwardCoverage':
         case 'manualAward':
@@ -244,7 +295,7 @@ export function apply(state, req) { validate(state); key(req.id); const sig = ca
     performLegacy(s, { type: 'captureYearbook', careerId: req.command.careerId, seasonId: req.command.seasonId, confirmed: true }); if (req.command.type === 'closeSeason' || req.command.type === 'switchClub') {
     const before = byId(state.careers, req.command.careerId);
     autoYearbook(s, before.seasonId);
-} s.revision++; s.audit.push({ id: req.id, type: req.command.type, signature: sig, revision: s.revision }); validate(s); return { state: s, duplicate: false }; }
+} s.revision++; s.audit.push({ id: req.id, type: req.command.type, signature: sig, revision: s.revision }); reconcileRpg(s); validate(s); return { state: s, duplicate: false }; }
 // Total rows are authoritative; only explicit non-overlapping scopes may be summed by future coverage-aware engine.
 export function playerTotals(s, careerId) { byId(s.careers, careerId); return s.stats.filter(x => x.scope === 'total' && byId(s.players, x.playerId).careerId === careerId); }
 export function calendarSummary(s, careerId, monthKey) { byId(s.careers, careerId); month(monthKey); const ms = s.matches.filter(x => x.careerId === careerId && x.date.slice(0, 7) === monthKey); return { played: ms.length, wins: ms.filter(x => x.gf > x.ga).length, draws: ms.filter(x => x.gf === x.ga).length, losses: ms.filter(x => x.gf < x.ga).length, gf: ms.reduce((a, x) => a + x.gf, 0), ga: ms.reduce((a, x) => a + x.ga, 0), coverage: 'unverified' }; }
