@@ -152,6 +152,15 @@ export function validate(s) {
         need(se.careerId === m.careerId && m.date >= se.joined && m.date <= (se.left ?? se.end) && m.date <= byId(s.careers, m.careerId).gameDate, 'Match scope/date');
         integer(m.gf, 0, 99);
         integer(m.ga, 0, 99);
+        for (const v of [m.opponentId, m.opponentCountry, m.opponentLeague, m.round])
+            if (v !== undefined)
+                label(v);
+        if (m.penalties) {
+            need(m.gf === m.ga, 'Shootout needs tied score');
+            integer(m.penalties.gf, 0, 99);
+            integer(m.penalties.ga, 0, 99);
+            need(m.penalties.gf !== m.penalties.ga, 'Shootout must have winner');
+        }
         if (m.opponent !== null)
             label(m.opponent);
         if (m.competition !== null)

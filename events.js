@@ -102,7 +102,11 @@ function metric(s, cid, p, seasonId) {
         case 'seasonAssists': {
             const f = p.metric === 'seasonGoals' ? 'goals' : p.metric === 'seasonApps' ? 'apps' : 'assists';
             const a = rows.filter(x => x.seasonId === sid);
-            return a.length && a.every(x => x[f] !== null) ? sumKnown(a.map(x => x[f])) : null;
+            const recorded = a.length && a.every(x => x[f] !== null) ? sumKnown(a.map(x => x[f])) : null;
+            if (p.metric !== 'seasonGoals')
+                return recorded;
+            const ms = s.matches.filter(m => m.seasonId === sid && m.competition !== null && !/friendly|friendlies|barátságos|pre.?season/i.test(m.competition));
+            return ms.length ? Math.max(recorded ?? 0, ms.reduce((n, m) => n + m.gf, 0)) : recorded;
         }
         case 'playerSeasonGoals':
         case 'playerSeasonAssists':
@@ -146,7 +150,10 @@ function knownSeasonWins(s, sid) {
     const calendar = matches.length ? matches.filter(m => m.gf > m.ga).length : null;
     const rows = se.joined === se.start ? scanState(s).records.filter(x => x.seasonId === sid && x.kind === 'league' && typeof x.cells.club === 'string' && norm(x.cells.club) === norm(j.club)).sort((a, b) => a.observedOn.localeCompare(b.observedOn)) : [];
     const w = rows.at(-1)?.cells.won, league = typeof w === 'number' ? w : null;
-    return calendar === null && league === null ? null : Math.max(calendar ?? 0, league ?? 0);
+    const leagueMatches = matches.filter(m => /^(league|bajnoki)$/i.test(m.competition ?? ''));
+    const cupMatches = matches.filter(m => /^(domestic cup|super cup|champions league|europa league|conference league|hazai kupa|szuperkupa)$/i.test(m.competition ?? ''));
+    const leagueWins = leagueMatches.filter(m => m.gf > m.ga).length, cupWins = cupMatches.filter(m => m.gf > m.ga).length;
+    return calendar === null && league === null ? null : Math.max(calendar ?? 0, Math.max(league ?? 0, leagueWins) + cupWins);
 }
 const met = (s, cid, p, sid) => !p || (metric(s, cid, p, sid) ?? -1) >= p.min;
 const SEASON_METRICS = ['seasonGoals', 'seasonApps', 'seasonWins', 'seasonAssists', 'playerSeasonGoals', 'playerSeasonAssists', 'playerSeasonApps', 'playerSeasonCleanSheets'];

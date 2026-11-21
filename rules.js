@@ -3,29 +3,46 @@ import { need, integer } from './model.js';
 export const PHILOSOPHIES = ['The Patriots', 'Regional Roots', 'Academy Builders', 'Talent Factory', 'Moneyball', 'Sleeping Giants', 'Underdogs', 'Galacticos', 'Global Football'];
 const limits = [[4, 2, 6], [4, 2, 8], [2, 1, 10], [5, 3, 12], [5, 2, 6], [5, 3, 6], [4, 2, 6], [4, 2, 4], [6, 3, 8]];
 export const PH_PRESSURE = [-10, -5, -10, 10, 5, 0, 5, -5, 0];
-export function preset(primary, domestic, region = [], secondary = null) { const i = PHILOSOPHIES.indexOf(primary); need(i >= 0, 'Philosophy'); const [summer, winter, academy] = limits[i]; const r = { primary, secondary, domestic, region: [...new Set([domestic, ...region])], scoutCountries: null, signCountries: null, outsideRegionMax: null, summer, winter, academy, promotion: null, reportLimit: null, ageMax: null, ovrAboveAverage: null, budgetPct: null, wageMax: null, loanMax: null, domesticPct: null, regionalPct: null, homegrownPct: null, domesticCaptain: false, integrationMin: null, positiveBalance: false }; switch (primary) {
-    case 'The Patriots':
-        Object.assign(r, { domesticPct: 90, homegrownPct: 20, scoutCountries: [domestic], signCountries: [domestic], domesticCaptain: true });
-        break;
-    case 'Regional Roots':
-        Object.assign(r, { regionalPct: 80, domesticPct: 50, scoutCountries: r.region, outsideRegionMax: 1 });
-        break;
-    case 'Academy Builders':
-        Object.assign(r, { homegrownPct: 40, promotion: 5, integrationMin: 2 });
-        break;
-    case 'Talent Factory':
-        Object.assign(r, { ageMax: 23, promotion: 6 });
-        break;
-    case 'Moneyball':
-        Object.assign(r, { ageMax: 27, budgetPct: 80, positiveBalance: true });
-        break;
-    case 'Sleeping Giants':
-        Object.assign(r, { domesticPct: 40, homegrownPct: 15 });
-        break;
-    case 'Underdogs':
-        Object.assign(r, { ovrAboveAverage: 3, budgetPct: 70, loanMax: 3 });
-        break;
-} validateRule(r); return r; }
+export function preset(primary, domestic, region = [], secondary = null) {
+    const i = PHILOSOPHIES.indexOf(primary);
+    need(i >= 0, 'Philosophy');
+    const [summer, winter, academy] = limits[i];
+    const r = { primary, secondary, domestic, region: [...new Set([domestic, ...region])], scoutCountries: null, signCountries: null, outsideRegionMax: null, summer, winter, academy, promotion: null, reportLimit: null, ageMax: null, ovrAboveAverage: null, budgetPct: null, wageMax: null, loanMax: null, domesticPct: null, regionalPct: null, homegrownPct: null, domesticCaptain: false, integrationMin: null, positiveBalance: false };
+    switch (primary) {
+        case 'The Patriots':
+            Object.assign(r, { domesticPct: 90, homegrownPct: 20, scoutCountries: [domestic], signCountries: [domestic], domesticCaptain: true });
+            break;
+        case 'Regional Roots':
+            Object.assign(r, { regionalPct: 80, domesticPct: 50, scoutCountries: r.region, outsideRegionMax: 1 });
+            break;
+        case 'Academy Builders':
+            Object.assign(r, { homegrownPct: 40, promotion: 5, integrationMin: 2 });
+            break;
+        case 'Talent Factory':
+            Object.assign(r, { ageMax: 23, promotion: 6 });
+            break;
+        case 'Moneyball':
+            Object.assign(r, { ageMax: 27, budgetPct: 80, positiveBalance: true });
+            break;
+        case 'Sleeping Giants':
+            Object.assign(r, { domesticPct: 40, homegrownPct: 15 });
+            break;
+        case 'Underdogs':
+            Object.assign(r, { ovrAboveAverage: 3, budgetPct: 70, loanMax: 3 });
+            break;
+    }
+    if (secondary) {
+        const other = preset(secondary, domestic, region); // Primary owns all base signing caps; secondary fills only unassigned constraints.
+        for (const k of ['scoutCountries', 'signCountries', 'outsideRegionMax', 'promotion', 'reportLimit', 'ageMax', 'ovrAboveAverage', 'budgetPct', 'wageMax', 'loanMax', 'domesticPct', 'regionalPct', 'homegrownPct', 'integrationMin']) {
+            if (r[k] === null && other[k] !== null)
+                Object.assign(r, { [k]: structuredClone(other[k]) });
+        }
+        r.domesticCaptain = r.domesticCaptain || other.domesticCaptain;
+        r.positiveBalance = r.positiveBalance || other.positiveBalance;
+    }
+    validateRule(r);
+    return r;
+}
 export function validateRule(r) { if (r.dna) {
     validateDNA(r.dna);
     need(sameCountry(r.domestic, countryName(r.dna.homeCountryId)) && r.region.length === r.dna.regionCountryIds.length && r.dna.regionCountryIds.every(x => includesCountry(r.region, countryName(x))), 'DNA / rule geography mismatch');

@@ -203,6 +203,38 @@ function perform(s, q) {
             upsert(s.stats, r, x => x.playerId === r.playerId && x.seasonId === r.seasonId && x.scope === r.scope);
             break;
         }
+        case 'recordMatch': {
+            const c = live(s, q.careerId), se = byId(s.seasons, c.seasonId), m = q.record;
+            need(q.confirmed && m.careerId === c.id && m.seasonId === se.id && !se.closed, 'Match requires open selected season');
+            date(m.date);
+            need(m.date >= se.joined && m.date <= se.end, 'Match outside tenure');
+            need(m.competition && m.opponent && m.venue, 'Opponent, competition and venue required');
+            if (m.date > c.gameDate) {
+                need(m.date.slice(0, 7) === c.gameDate.slice(0, 7) && c.nextMonth >= c.gameDate.slice(0, 7), 'Close pending month before recording a later date');
+                perform(s, { type: 'advance', careerId: c.id, to: m.date });
+            }
+            const old = s.matches.find(x => x.id === m.id);
+            need(!old || old.seasonId === se.id && old.careerId === c.id && old.date === m.date, 'Match identity conflict');
+            need(!s.matches.some(x => x.careerId === c.id && x.date === m.date && x.id !== m.id), 'Match exists on this date; edit existing match');
+            need(!old || q.correction === true, 'Confirm match correction');
+            const updated = { ...m, source: old?.source ?? 'manual-calendar' };
+            if (old)
+                s.matches[s.matches.indexOf(old)] = structuredClone(updated);
+            else
+                s.matches.push(structuredClone(updated));
+            break;
+        }
+        case 'addMissingWindow': {
+            const c = live(s, q.careerId), se = byId(s.seasons, c.seasonId), w = q.window;
+            need(q.confirmed && !se.closed && !!w.kind, 'Confirm missing transfer window');
+            need(!se.windows.some(x => x.kind === w.kind || x.id === w.id || x.start <= w.end && w.start <= x.end), 'Window already exists or overlaps');
+            date(w.start);
+            date(w.end);
+            need(w.start <= w.end && w.start <= se.end && w.end >= se.joined, 'Window outside season');
+            se.windows.push(structuredClone(w));
+            performGame(s, { type: 'registerWindow', careerId: c.id, windowId: w.id, kind: w.kind });
+            break;
+        }
         case 'importCalendar': {
             const c = live(s, q.careerId), se = byId(s.seasons, q.seasonId);
             need(q.confirmed === true && se.careerId === c.id, 'Import not confirmed / wrong scope');
@@ -218,7 +250,20 @@ function perform(s, q) {
                     need(old.careerId === c.id && old.seasonId === se.id, 'Match identity conflict');
                 const candidates = s.matches.filter(x => x.id !== m.id && x.careerId === c.id && x.date === m.date);
                 need(candidates.length === 0, 'Possible duplicate match; resolve stable ID in review');
-                upsert(s.matches, { ...m, source: q.sourceHash }, x => x.id === m.id);
+                const next = { ...old, ...m, source: q.sourceHash };
+                if (old && (old.gf !== m.gf || old.ga !== m.ga) && !m.penalties)
+                    delete next.penalties;
+                if (old && old.opponent !== m.opponent && !m.opponentId) {
+                    delete next.opponentId;
+                    delete next.opponentCountry;
+                    delete next.opponentLeague;
+                }
+                if (old && old.competition !== m.competition && !m.round)
+                    delete next.round;
+                if (old)
+                    s.matches[s.matches.indexOf(old)] = next;
+                else
+                    s.matches.push(next);
             }
             s.imports.push({ id: q.importId, careerId: c.id, seasonId: se.id, sourceHash: q.sourceHash, kind: 'calendar', matchIds: q.matches.map(x => x.id) });
             break;

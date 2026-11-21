@@ -73,6 +73,9 @@ export function normalizeAssisted(input) {
     need(c.currency === null || typeof c.currency === 'string' && /^[A-Z]{3}$/.test(c.currency), 'Invalid currency');
     if (c.seasonLabel !== null)
         label(c.seasonLabel);
+    for (const k of ['careerId', 'seasonId', 'journeyId'])
+        if (c[k] !== undefined)
+            label(c[k]);
     const seen = new Set();
     const documents = e.documents.map((d) => {
         need(d && kinds.includes(d.kind) && typeof d.sourceHash === 'string' && /^[a-f0-9]{64}$/.test(d.sourceHash) && !seen.has(d.sourceHash), 'Invalid/duplicate source');
@@ -104,9 +107,9 @@ export function normalizeAssisted(input) {
         } return { sourceRow: i, cells, warnings, raw: {} }; });
         return { kind: k, sourceHash: d.sourceHash, filename: d.filename, month: d.month, rows, unresolved: 0 };
     });
-    return { context: { edition: c.edition, club: c.club, observedOn: c.observedOn, currency: c.currency, seasonLabel: c.seasonLabel }, documents };
+    return { context: { edition: c.edition, club: c.club, observedOn: c.observedOn, currency: c.currency, seasonLabel: c.seasonLabel, ...(c.careerId !== undefined ? { careerId: c.careerId } : {}), ...(c.seasonId !== undefined ? { seasonId: c.seasonId } : {}), ...(c.journeyId !== undefined ? { journeyId: c.journeyId } : {}) }, documents };
 }
-export function assertAssistedScope(s, careerId, ctx, allowFuturePreview = false) { const c = byId(s.careers, careerId), se = byId(s.seasons, c.seasonId), j = byId(s.journeys, c.journeyId); need(c.edition.toLowerCase() === ctx.edition.toLowerCase() && j.club.trim().toLowerCase() === ctx.club.trim().toLowerCase(), 'Assisted package edition/club does not match selected career'); if (ctx.observedOn !== null)
+export function assertAssistedScope(s, careerId, ctx, allowFuturePreview = false) { const c = byId(s.careers, careerId), se = byId(s.seasons, c.seasonId), j = byId(s.journeys, c.journeyId); need(c.edition.toLowerCase() === ctx.edition.toLowerCase() && j.club.trim().toLowerCase() === ctx.club.trim().toLowerCase(), 'Assisted package edition/club does not match selected career'); need((ctx.careerId === undefined || ctx.careerId === c.id) && (ctx.seasonId === undefined || ctx.seasonId === se.id) && (ctx.journeyId === undefined || ctx.journeyId === j.id), 'Package belongs to another career / season / club journey'); if (ctx.observedOn !== null)
     need(ctx.observedOn >= se.joined && ctx.observedOn <= (se.left ?? se.end) && (allowFuturePreview || ctx.observedOn <= c.gameDate), 'Assisted observation date outside selected season/game time'); }
 function cellCheck(k, c) {
     need(Object.keys(c).sort().join(',') === [...fields[k]].sort().join(','), 'Unexpected/missing fields');
@@ -252,9 +255,21 @@ export function performScan(s, q, close) {
                 const old = s.matches.find(x => x.id === r.entityId);
                 need(!old || old.careerId === c.id && old.seasonId === se.id && old.date === day, 'Match identity conflict');
                 need(!s.matches.some(x => x.careerId === c.id && x.date === day && x.id !== r.entityId), 'Use existing match ID');
-                const next = { id: r.entityId, careerId: c.id, seasonId: se.id, date: day, gf: v.gf, ga: v.ga, opponent: v.opponent ?? old?.opponent ?? null, competition: v.competition ?? old?.competition ?? null, venue: v.venue ?? old?.venue ?? null, source: d.sourceHash };
+                const next = { ...old, id: r.entityId, careerId: c.id, seasonId: se.id, date: day, gf: v.gf, ga: v.ga, opponent: v.opponent ?? old?.opponent ?? null, competition: v.competition ?? old?.competition ?? null, venue: v.venue ?? old?.venue ?? null, source: d.sourceHash };
                 need(!old || d.correction || old.gf === next.gf && old.ga === next.ga, 'Score correction needs confirmation');
-                patch(s.matches, next);
+                if (old && (old.gf !== next.gf || old.ga !== next.ga))
+                    delete next.penalties;
+                if (old && old.opponent !== next.opponent) {
+                    delete next.opponentId;
+                    delete next.opponentCountry;
+                    delete next.opponentLeague;
+                }
+                if (old && old.competition !== next.competition)
+                    delete next.round;
+                if (old)
+                    s.matches[s.matches.indexOf(old)] = next;
+                else
+                    s.matches.push(next);
                 matchIds.push(r.entityId);
             }
             if (d.kind === 'transfer') {
